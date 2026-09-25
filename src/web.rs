@@ -124,6 +124,69 @@ pub async fn test_fcm_handler(State(state): State<Arc<AppState>>) -> (StatusCode
     )
 }
 
-pub async fn json_handler(State(state): State<Arc<AppState>>) -> Json<UpsMetrics> {
-    Json(fetch_ups_metrics(&state))
+/// Returns the most recent history entry where the UPS switched to battery (OB/LB).
+/// An "incident" is defined as a transition into a battery-powered state.
+pub fn get_last_incident(state: &AppState) -> Option<StatusHistoryEntry> {
+    let db = state.db_conn.lock().unwrap();
+    let mut stmt = db.prepare(
+        "SELECT id, status, description, changed_at FROM status_history \
+         WHERE status LIKE 'OB%' OR status LIKE 'LB%' \
+         ORDER BY id DESC LIMIT 1"
+    ).ok()?;
+    let mut rows = stmt.query([]).ok()?;
+    if let Some(row) = rows.next().ok()? {
+        Some(StatusHistoryEntry {
+            id: row.get(0).ok()?,
+            status: row.get(1).ok()?,
+            description: row.get(2).ok()?,
+            changed_at: row.get(3).ok()?,
+        })
+    } else {
+        None
+    }
+}
+
+/// Response shape for GET /api/status — live metrics enriched with the last recorded incident.
+#[derive(Serialize, Clone, Debug)]
+pub struct StatusResponse {
+    #[serde(flatten)]
+    pub metrics: UpsMetrics,
+    pub last_incident: Option<StatusHistoryEntry>,
+}
+
+pub async fn json_handler(State(state): State<Arc<AppState>>) -> Json<StatusResponse> {
+    Json(StatusResponse {
+        metrics: fetch_ups_metrics(&state),
+        last_incident: get_last_incident(&state),
+    })
+}
+
+#[derive(Serialize, Clone, Debug)]
+pub struct StatusHistoryEntry {
+    pub id: i64,
+    pub status: String,
+    pub description: String,
+    pub changed_at: String,
+}
+
+/// Reads the latest `limit` status history entries from the DB, most recent first.
+pub fn get_status_history(state: &AppState, limit: usize) -> Vec<StatusHistoryEntry> {
+    let db = state.db_conn.lock().unwrap();
+    let mut stmt = db.prepare(
+        "SELECT id, status, description, changed_at FROM status_history ORDER BY id DESC LIMIT ?1"
+    ).unwrap();
+    let iter = stmt.query_map(rusqlite::params![limit as i64], |row| {
+        Ok(StatusHistoryEntry {
+            id: row.get(0)?,
+            status: row.get(1)?,
+            description: row.get(2)?,
+            changed_at: row.get(3)?,
+        })
+    }).unwrap();
+    iter.filter_map(|e| e.ok()).collect()
+}
+
+pub async fn status_history_handler(State(state): State<Arc<AppState>>) -> (StatusCode, Json<Vec<StatusHistoryEntry>>) {
+    let entries = get_status_history(&state, 5);
+    (StatusCode::OK, Json(entries))
 }

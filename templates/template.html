@@ -130,6 +130,53 @@
         .status-critical { background-color: rgba(255, 85, 85, 0.15); color: var(--danger); border: 1px solid rgba(255, 85, 85, 0.3); }
         .status-unknown { background-color: rgba(98, 114, 164, 0.15); color: var(--text-secondary); border: 1px solid var(--border); }
 
+        .incident-banner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background-color: rgba(255, 184, 108, 0.07);
+            border: 1px solid rgba(255, 184, 108, 0.25);
+            border-radius: 10px;
+            padding: 10px 16px;
+            margin-bottom: 20px;
+            font-size: 0.82rem;
+        }
+
+        .incident-banner-icon {
+            font-size: 1rem;
+            flex-shrink: 0;
+        }
+
+        .incident-banner-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .incident-banner-label {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--warning);
+            font-weight: 700;
+        }
+
+        .incident-banner-desc {
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-top: 1px;
+        }
+
+        .incident-banner-time {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--warning);
+            opacity: 0.8;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
         .progress-wrapper {
             width: 100%;
             margin-top: 8px;
@@ -236,6 +283,85 @@
             text-align: center;
             padding: 12px 0;
         }
+
+        /* ── Status History ───────────────────────────────────────── */
+        .history-section {
+            margin-top: 24px;
+            border-top: 1px dashed var(--border);
+            padding-top: 24px;
+        }
+
+        .history-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--accent-blue);
+            font-weight: 700;
+            margin-bottom: 14px;
+        }
+
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .history-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            background-color: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 16px;
+        }
+
+        .history-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--accent-blue);
+            flex-shrink: 0;
+            margin-top: 5px;
+        }
+
+        .history-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .history-status {
+            font-size: 0.8rem;
+            font-weight: 700;
+            font-family: var(--font-mono);
+            color: var(--text-primary);
+        }
+
+        .history-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 2px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .history-time {
+            font-size: 0.72rem;
+            color: var(--text-secondary);
+            font-family: var(--font-mono);
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+
+        .history-empty {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-style: italic;
+            text-align: center;
+            padding: 12px 0;
+        }
+        /* ─────────────────────────────────────────────────────────── */
 
         footer {
             display: flex;
@@ -351,6 +477,17 @@
             <span class="status-badge {{ status_class }}">{{ ups_status }}</span>
         </header>
 
+        {% if !last_incident_at.is_empty() %}
+        <div class="incident-banner">
+            <span class="incident-banner-icon">⚡</span>
+            <div class="incident-banner-body">
+                <div class="incident-banner-label">Last Power Outage</div>
+                <div class="incident-banner-desc">{{ last_incident_desc }}</div>
+            </div>
+            <span class="incident-banner-time">{{ last_incident_at }}</span>
+        </div>
+        {% endif %}
+
         <div class="grid">
             <div class="card card-full">
                 <div>
@@ -392,6 +529,26 @@
             </div>
         </div>
 
+        <div class="history-section">
+            <div class="history-title">📋 Recent Status Changes</div>
+            <div class="history-list">
+                {% if status_history.is_empty() %}
+                <div class="history-empty">No status changes recorded yet.</div>
+                {% else %}
+                {% for entry in status_history %}
+                <div class="history-row">
+                    <div class="history-dot"></div>
+                    <div class="history-content">
+                        <div class="history-status">{{ entry.status }}</div>
+                        <div class="history-desc">{{ entry.description }}</div>
+                    </div>
+                    <div class="history-time">{{ entry.changed_at }}</div>
+                </div>
+                {% endfor %}
+                {% endif %}
+            </div>
+        </div>
+
         <div class="abm-section">
             <div class="abm-title">🔔 Registered Alert Receivers</div>
             <div class="device-list" id="deviceListContainer">
@@ -403,6 +560,7 @@
             <div class="links">
                 <span>Real-time tracking</span>
                 <a href="/api/status" target="_blank">JSON API</a>
+                <a href="/api/status-history" target="_blank">History API</a>
             </div>
             <button class="btn-refresh" onclick="window.location.reload()">Refresh</button>
         </footer>

@@ -87,6 +87,16 @@ async fn main() {
         [],
     ).expect("Failed to create devices table");
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS status_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            status TEXT NOT NULL,
+            description TEXT NOT NULL,
+            changed_at TEXT NOT NULL
+        )",
+        [],
+    ).expect("Failed to create status_history table");
+
     let shared_state = Arc::new(AppState {
         ups_name,
         ups_host,
@@ -108,6 +118,7 @@ async fn main() {
     let app = Router::new()
         .route("/", get(dashboard::html_handler))
         .route("/api/status", get(web::json_handler))
+        .route("/api/status-history", get(web::status_history_handler))
         .route("/api/register", post(web::register_device_handler))
         .route("/api/test-fcm", post(web::test_fcm_handler))
         .route("/api/devices", get(web::get_devices_handler))
@@ -132,6 +143,15 @@ mod tests {
                 device_id TEXT PRIMARY KEY,
                 device_name TEXT NOT NULL,
                 device_token TEXT NOT NULL UNIQUE
+            )",
+            [],
+        ).unwrap();
+        conn.execute(
+            "CREATE TABLE status_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL,
+                description TEXT NOT NULL,
+                changed_at TEXT NOT NULL
             )",
             [],
         ).unwrap();
@@ -205,5 +225,38 @@ battery.runtime: 1800
         assert_eq!(metrics.status, "Online (AC)");
         assert_eq!(metrics.runtime_seconds, "1800");
         assert_eq!(metrics.runtime_formatted, "30 min");
+    }
+
+    #[test]
+    fn test_status_history_insert_and_retrieve() {
+        let db = setup_test_db();
+
+        // Insert three history entries
+        let entries = [
+            ("Online (AC)", "Initial status detected: Online (AC)", "2026-01-01T00:00:00Z"),
+            ("On Battery",  "Status changed from 'Online (AC)' to 'On Battery'.", "2026-01-01T01:00:00Z"),
+            ("Online (AC)", "Status changed from 'On Battery' to 'Online (AC)'.", "2026-01-01T02:00:00Z"),
+        ];
+        for (status, desc, ts) in &entries {
+            db.execute(
+                "INSERT INTO status_history (status, description, changed_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![status, desc, ts],
+            ).unwrap();
+        }
+
+        let count: i64 = db.query_row("SELECT count(*) FROM status_history", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 3);
+
+        // Retrieve latest 2 (most recent first)
+        let mut stmt = db.prepare(
+            "SELECT status FROM status_history ORDER BY id DESC LIMIT 2"
+        ).unwrap();
+        let statuses: Vec<String> = stmt
+            .query_map([], |r| r.get(0)).unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert_eq!(statuses.len(), 2);
+        assert_eq!(statuses[0], "Online (AC)");
+        assert_eq!(statuses[1], "On Battery");
     }
 }

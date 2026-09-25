@@ -9,6 +9,18 @@ pub fn get_registered_tokens(state: &AppState) -> Vec<String> {
     token_iter.filter_map(|t| t.ok()).collect::<Vec<String>>()
 }
 
+/// Persists a UPS status change event to the `status_history` table.
+pub fn record_status_change(state: &AppState, status: &str, description: &str) {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let db = state.db_conn.lock().unwrap();
+    if let Err(e) = db.execute(
+        "INSERT INTO status_history (status, description, changed_at) VALUES (?1, ?2, ?3)",
+        rusqlite::params![status, description, now],
+    ) {
+        error!("Failed to persist status change to history: {}", e);
+    }
+}
+
 pub async fn evaluate_alerts(state: &AppState) {
     let m = fetch_ups_metrics(state);
     if m.status == "Disconnected" || m.status.contains("Error") { return; }
@@ -16,17 +28,24 @@ pub async fn evaluate_alerts(state: &AppState) {
     let mut trigger = false;
     let mut title = String::new();
     let mut message = String::new();
+    let mut status_changed = false;
+    let mut prev_status = String::new();
 
     {
         let mut alerts = state.last_alerts.lock().unwrap();
 
-        if !alerts.last_status.is_empty() && alerts.last_status != m.status {
-            trigger = true;
-            let msg_status = status_to_message(m.status.as_str(), m.status.clone());
-            title = format!("UPS Status Changed: {}", msg_status);
-            message = format!("Device shifted from {} to {}.", alerts.last_status, msg_status);
+        if alerts.last_status != m.status {
+            status_changed = true;
+            prev_status = alerts.last_status.clone();
+
+            if !alerts.last_status.is_empty() {
+                trigger = true;
+                let msg_status = status_to_message(m.status.as_str(), m.status.clone());
+                title = format!("UPS Status Changed: {}", msg_status);
+                message = format!("Device shifted from {} to {}.", alerts.last_status, msg_status);
+            }
+            alerts.last_status = m.status.clone();
         }
-        alerts.last_status = m.status.clone();
 
         if let Ok(charge) = m.battery_charge.parse::<u32>() {
             if charge < 50 {
@@ -68,6 +87,16 @@ pub async fn evaluate_alerts(state: &AppState) {
             // Si vuelve a la red eléctrica (AC), reseteamos el flag para que pueda volver a alertar en el futuro
             alerts.runtime_low_sent = false;
         }
+    }
+
+    // Persist status transition to history (lock is released above)
+    if status_changed {
+        let desc = if prev_status.is_empty() {
+            format!("Initial status detected: {}", m.status)
+        } else {
+            format!("Status changed from '{}' to '{}'.", prev_status, m.status)
+        };
+        record_status_change(state, &m.status, &desc);
     }
 
     if trigger {

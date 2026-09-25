@@ -7,6 +7,7 @@ use axum::{
 use askama::Template;
 use crate::AppState;
 use crate::metrics::{fetch_ups_metrics, status_to_message};
+use crate::web::{get_last_incident, get_status_history, StatusHistoryEntry};
 
 #[derive(Template)]
 #[template(path = "template.html")]
@@ -26,6 +27,11 @@ pub struct DashboardTemplate {
     pub input_voltage_nominal: String,
     pub battery_voltage_nominal: String,
     pub battery_voltage: String,
+    pub status_history: Vec<StatusHistoryEntry>,
+    /// Timestamp of the last transition to a battery-powered state, or empty string if none.
+    pub last_incident_at: String,
+    /// Description of the last incident, or empty string if none.
+    pub last_incident_desc: String,
 }
 
 pub async fn html_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -37,6 +43,13 @@ pub async fn html_handler(State(state): State<Arc<AppState>>) -> impl IntoRespon
         "On Battery" => "status-battery",
         "Low Battery ⚠️" => "status-critical",
         _ => "status-unknown",
+    };
+
+    let history = get_status_history(&state, 3);
+    let last_incident = get_last_incident(&state);
+    let (last_incident_at, last_incident_desc) = match last_incident {
+        Some(ref e) => (e.changed_at.clone(), e.description.clone()),
+        None => (String::new(), String::new()),
     };
 
     let template = DashboardTemplate {
@@ -55,6 +68,9 @@ pub async fn html_handler(State(state): State<Arc<AppState>>) -> impl IntoRespon
         input_voltage_nominal: m.input_voltage_nominal.clone(),
         battery_voltage_nominal: m.battery_voltage_nominal.clone(),
         battery_voltage: m.battery_voltage.clone(),
+        status_history: history,
+        last_incident_at,
+        last_incident_desc,
     };
 
     match template.render() {
