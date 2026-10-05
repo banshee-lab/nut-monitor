@@ -1,11 +1,23 @@
-use tracing::{info, error};
+use tracing::{info, warn, error};
 use crate::AppState;
 use crate::metrics::{fetch_ups_metrics, status_to_message};
 
 pub fn get_registered_tokens(state: &AppState) -> Vec<String> {
     let db = state.db_conn.lock().unwrap();
-    let mut stmt = db.prepare("SELECT device_token FROM devices").unwrap();
-    let token_iter = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap();
+    let mut stmt = match db.prepare("SELECT device_token FROM devices") {
+        Ok(s) => s,
+        Err(e) => {
+            error!(error = %e, "Failed to prepare device token query");
+            return Vec::new();
+        }
+    };
+    let token_iter = match stmt.query_map([], |row| row.get::<_, String>(0)) {
+        Ok(iter) => iter,
+        Err(e) => {
+            error!(error = %e, "Failed to query device tokens from database");
+            return Vec::new();
+        }
+    };
     token_iter.filter_map(|t| t.ok()).collect::<Vec<String>>()
 }
 
@@ -23,7 +35,10 @@ pub fn record_status_change(state: &AppState, status: &str, description: &str) {
 
 pub async fn evaluate_alerts(state: &AppState) {
     let m = fetch_ups_metrics(state);
-    if m.status == "Disconnected" || m.status.contains("Error") { return; }
+    if m.status == "Disconnected" || m.status.contains("Error") {
+        warn!(status = %m.status, "Skipping alert evaluation — UPS is unreachable or reporting an error");
+        return;
+    }
 
     let mut trigger = false;
     let mut title = String::new();

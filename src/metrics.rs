@@ -1,5 +1,6 @@
 use std::process::Command;
 use serde::Serialize;
+use tracing::{debug, warn, error};
 use crate::AppState;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -92,22 +93,39 @@ pub fn parse_upsc_output(stdout_str: &str) -> UpsMetrics {
 }
 
 pub fn fetch_ups_metrics(state: &AppState) -> UpsMetrics {
-    let output = Command::new("upsc")
-        .arg(format!("{}@{}", state.ups_name, state.ups_host))
-        .output();
+    let target = format!("{}@{}", state.ups_name, state.ups_host);
+    debug!(ups_target = %target, "Querying UPS via upsc");
 
-    if let Ok(out) = output {
-        if out.status.success() {
+    match Command::new("upsc").arg(&target).output() {
+        Ok(out) if out.status.success() => {
             let stdout_str = String::from_utf8_lossy(&out.stdout);
+            debug!(ups_target = %target, lines = stdout_str.lines().count(), "upsc query succeeded");
             parse_upsc_output(&stdout_str)
-        } else {
+        }
+        Ok(out) => {
+            // upsc exited with a non-zero code — capture stderr for the real upsd error message
+            let stderr_str = String::from_utf8_lossy(&out.stderr);
+            let stderr_trimmed = stderr_str.trim();
+            error!(
+                ups_target = %target,
+                exit_code = ?out.status.code(),
+                stderr = %stderr_trimmed,
+                "upsc exited with an error — upsd communication failed"
+            );
             let mut m = parse_upsc_output("");
             m.status = "Communication Error (upsd)".to_string();
             m
         }
-    } else {
-        let mut m = parse_upsc_output("");
-        m.status = "Disconnected".to_string();
-        m
+        Err(e) => {
+            // OS-level failure: upsc binary missing, permission denied, etc.
+            warn!(
+                ups_target = %target,
+                error = %e,
+                "Failed to spawn upsc process — is nut-client installed and in PATH?"
+            );
+            let mut m = parse_upsc_output("");
+            m.status = "Disconnected".to_string();
+            m
+        }
     }
 }
